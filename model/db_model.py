@@ -104,7 +104,7 @@ class AlarmConfirmationRequest(BaseModel):
 class WorkerEventConfirmationLog(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     worker_event_id: int = Field(foreign_key="workerevent.id", index=True)
-    employee_confirm_id: str
+    # employee_confirm_id: str
     client_ip: str
     logged_at: datetime.datetime = Field(default_factory=datetime.datetime.now)
     

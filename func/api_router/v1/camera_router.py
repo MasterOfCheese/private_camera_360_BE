@@ -46,7 +46,7 @@ async def decline_worker_event_by_id(
         # Còn không thì dùng chung với AlarmConfirmationLog cũng được
         new_log = WorkerEventConfirmationLog(
             worker_event_id=worker_event_id,  # Đúng field name
-            employee_confirm_id=request_data.employee_confirm_id,
+            # employee_confirm_id=request_data.employee_confirm_id,
             client_ip=client_ip,
         )
         session.add(new_log)
@@ -97,7 +97,7 @@ async def accept_worker_event_by_id(
         # Tạo bản ghi log mới
         new_log = WorkerEventConfirmationLog(
             worker_event_id=worker_event_id,  # Đúng field name
-            employee_confirm_id=request_data.employee_confirm_id,
+            # employee_confirm_id=request_data.employee_confirm_id,
             client_ip=client_ip,
         )
         session.add(new_log)
