@@ -27,22 +27,22 @@ async def decline_worker_event_by_id(
     request: Request
 ):
     """
-    Decline worker event - Đơn giản giống Smart Gate
+    Decline worker event - Simplified without status field
     """
     try:
         worker_event = await session.get(WorkerEvent, worker_event_id)
         if not worker_event:
             raise HTTPException(status_code=404, detail="Worker event not found")
 
-        # Cập nhật status
+        # Update status to 2 (declined)
         worker_event.status = 2
         session.add(worker_event)
 
-        # Tạo log đơn giản
+        # Create simplified log without status field
         new_log = WorkerEventConfirmationLog(
             worker_event_id=worker_event_id,
-            action=request_data.action,  # "NG"
-            status=request_data.status   # "Pending"
+            action=request_data.action  # "NG"
+            # Remove: status=request_data.status
         )
         session.add(new_log)
 
@@ -62,7 +62,6 @@ async def decline_worker_event_by_id(
         raise HTTPException(status_code=500, detail=str(e))
     
 
-# Cập nhật endpoint để xử lý trạng thái 'Accept'
 @router.patch("/worker-events/{worker_event_id}/accept")
 async def accept_worker_event_by_id(
     *,
@@ -72,22 +71,22 @@ async def accept_worker_event_by_id(
     request: Request
 ):
     """
-    Accept worker event - Đơn giản giống Smart Gate
+    Accept worker event - Simplified without status field
     """
     try:
         worker_event = await session.get(WorkerEvent, worker_event_id)
         if not worker_event:
             raise HTTPException(status_code=404, detail="Worker event not found")
 
-        # Cập nhật status
+        # Update status to 1 (accepted)
         worker_event.status = 1
         session.add(worker_event)
         
-        # Tạo log đơn giản - chỉ lưu action và status
+        # Create simplified log without status field
         new_log = WorkerEventConfirmationLog(
             worker_event_id=worker_event_id,
-            action=request_data.action,  # "OK"
-            status=request_data.status   # "Pending" 
+            action=request_data.action  # "OK"
+            # Remove: status=request_data.status
         )
         session.add(new_log)
 
