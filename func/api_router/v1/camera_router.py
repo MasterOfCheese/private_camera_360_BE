@@ -12,7 +12,7 @@ import base64
 from sqlalchemy import func
 from sqlmodel import select, delete
 from func.auth.v1.auth import get_current_user
-from model.db_model import Alarm, CameraConfig, CameraConfigCreate, CameraConfigPublic, CameraConfigPublicWithTags, CameraConfigTagLink, CameraConfigUpdate, Tag, WorkerEvent, WorkerEventConfirmationLog, get_session, UserPublic, AlarmConfirmationLog
+from model.db_model import Alarm, CameraConfig, CameraConfigCreate, CameraConfigPublic, CameraConfigPublicWithTags, CameraConfigTagLink, CameraConfigUpdate, Tag, WorkerEvent, WorkerEventActionRequest, WorkerEventConfirmationLog, get_session, UserPublic, AlarmConfirmationLog
 from model.db_model import AlarmConfirmationRequest
 from sqlalchemy.ext.asyncio import AsyncSession
 router = APIRouter(prefix="/v1/cameras",tags=["cameras"])
@@ -23,52 +23,44 @@ async def decline_worker_event_by_id(
     *,
     session: AsyncSession = Depends(get_session),
     worker_event_id: int,
-    request_data: AlarmConfirmationRequest,
+    request_data: WorkerEventActionRequest,
     request: Request
 ):
     """
-    Cập nhật trạng thái của một sự kiện worker thành 'Declined' dựa trên ID.
+    Decline worker event - Đơn giản giống Smart Gate
     """
     try:
         worker_event = await session.get(WorkerEvent, worker_event_id)
         if not worker_event:
             raise HTTPException(status_code=404, detail="Worker event not found")
 
-        # Cập nhật trạng thái của worker event thành 2 (Decline)
+        # Cập nhật status
         worker_event.status = 2
         session.add(worker_event)
 
-        # Lấy IP của client
-        client_ip = request.client.host
-
-        # Tạo bản ghi log mới
-        # Nếu bạn có một bảng log riêng cho WorkerEvent thì nên dùng nó
-        # Còn không thì dùng chung với AlarmConfirmationLog cũng được
+        # Tạo log đơn giản
         new_log = WorkerEventConfirmationLog(
-            worker_event_id=worker_event_id,  # Đúng field name
-            # employee_confirm_id=request_data.employee_confirm_id,
-            client_ip=client_ip,
+            worker_event_id=worker_event_id,
+            action=request_data.action,  # "NG"
+            status=request_data.status   # "Pending"
         )
         session.add(new_log)
 
-        # Commit thay đổi vào database
         await session.commit()
         await session.refresh(worker_event)
         await session.refresh(new_log)
 
-        # Trả về kết quả thành công
         return {
-            "message": "Worker event declined and logged successfully",
+            "message": "Worker event declined successfully", 
             "event": worker_event,
             "log": new_log
         }
     except HTTPException as e:
-        # Nếu là lỗi HTTPException thì raise lại
         raise e
     except Exception as e:
-        # Xử lý các lỗi ngoại lệ khác
         await session.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+    
 
 # Cập nhật endpoint để xử lý trạng thái 'Accept'
 @router.patch("/worker-events/{worker_event_id}/accept")
@@ -76,29 +68,26 @@ async def accept_worker_event_by_id(
     *,
     session: AsyncSession = Depends(get_session),
     worker_event_id: int,
-    request_data: AlarmConfirmationRequest,
+    request_data: WorkerEventActionRequest,
     request: Request
 ):
     """
-    Cập nhật trạng thái của một sự kiện worker thành 'Accepted' dựa trên ID.
+    Accept worker event - Đơn giản giống Smart Gate
     """
     try:
         worker_event = await session.get(WorkerEvent, worker_event_id)
         if not worker_event:
             raise HTTPException(status_code=404, detail="Worker event not found")
 
-        # Cập nhật trạng thái của worker event thành 1 (Accept)
+        # Cập nhật status
         worker_event.status = 1
         session.add(worker_event)
         
-        # Lấy IP của client
-        client_ip = request.client.host
-
-        # Tạo bản ghi log mới
+        # Tạo log đơn giản - chỉ lưu action và status
         new_log = WorkerEventConfirmationLog(
-            worker_event_id=worker_event_id,  # Đúng field name
-            # employee_confirm_id=request_data.employee_confirm_id,
-            client_ip=client_ip,
+            worker_event_id=worker_event_id,
+            action=request_data.action,  # "OK"
+            status=request_data.status   # "Pending" 
         )
         session.add(new_log)
 
@@ -107,7 +96,7 @@ async def accept_worker_event_by_id(
         await session.refresh(new_log)
 
         return {
-            "message": "Worker event accepted and logged successfully",
+            "message": "Worker event accepted successfully",
             "event": worker_event,
             "log": new_log
         }
