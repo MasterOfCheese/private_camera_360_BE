@@ -3,6 +3,8 @@ import json
 import time
 from typing import Dict, Any
 from concurrent.futures import ThreadPoolExecutor
+import requests
+from typing import Set
 
 import psutil
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -105,3 +107,72 @@ async def websocket_sysinfo_endpoint(websocket: WebSocket):
 async def get_status():
     sys_info = await get_system_info()  # Gọi async non-blocking
     return sys_info
+
+
+def get_mediamtx_active_streams() -> Set[str]:
+    """Get active camera streams from MediaMTX API"""
+    try:
+        # Get MediaMTX API URL from config/environment
+        mediamtx_url = "http://localhost:9997/v3/paths/list"  # Có thể config trong .env
+        
+        response = requests.get(mediamtx_url, timeout=5)
+        
+        if not response.ok:
+            print(f"Failed to fetch MediaMTX status: {response.status_code}")
+            return set()
+        
+        data = response.json()
+        active_streams = set()
+        
+        # Extract active stream names
+        if data.get('items') and isinstance(data['items'], list):
+            for item in data['items']:
+                if item.get('ready') and item.get('name'):
+                    active_streams.add(item['name'])
+        
+        return active_streams
+    except requests.exceptions.RequestException as e:
+        print(f"Error checking MediaMTX status: {e}")
+        return set()
+    except Exception as e:
+        print(f"Unexpected error in get_mediamtx_active_streams: {e}")
+        return set()
+
+def get_camera_status_info() -> dict:
+    """Get camera status information"""
+    active_streams = get_mediamtx_active_streams()
+    return {
+        "active_streams": list(active_streams),
+        "total_active": len(active_streams),
+        "timestamp": time.time()
+    }
+
+# WebSocket Endpoint for Camera Status
+@router.websocket("/camera-status")
+async def websocket_camera_status_endpoint(websocket: WebSocket):
+    print("Client connecting to /sys/camera-status ...")
+    await websocket.accept()
+    print("Client connected to /sys/camera-status.")
+
+    try:
+        while True:
+            loop = asyncio.get_running_loop()
+            camera_status = await loop.run_in_executor(executor, get_camera_status_info)
+            await websocket.send_json(camera_status)
+            await asyncio.sleep(5)  # Update mỗi 5 giây
+    except WebSocketDisconnect:
+        print("Client disconnected from /sys/camera-status.")
+    except Exception as e:
+        print(f"An error occurred on /sys/camera-status: {e}")
+        try:
+            await websocket.close(code=1011)
+        except RuntimeError:
+            pass
+    finally:
+        print("WebSocket connection closed for /sys/camera-status.")
+
+# HTTP endpoint để test
+@router.get("/camera-status")
+async def get_camera_status():
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(executor, get_camera_status_info)
