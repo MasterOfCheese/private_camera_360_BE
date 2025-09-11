@@ -2,15 +2,15 @@ from ast import List
 import datetime
 import os
 import shutil
-from tokenize import String
 from typing import Annotated, Optional, List, Union
+from sqlalchemy import String
 import uuid
 from zipfile import Path
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, UploadFile, File, Request
 from PIL import Image
 import io
 import base64
-from sqlalchemy import func
+from sqlalchemy import func, cast
 from sqlmodel import select, delete
 from func.auth.v1.auth import get_current_user
 from model.db_model import Alarm, CameraConfig, CameraConfigCreate, CameraConfigPublic, CameraConfigPublicWithTags, CameraConfigTagLink, CameraConfigUpdate, Tag, WorkerEvent, WorkerEventActionRequest, WorkerEventConfirmationLog, get_session, UserPublic, AlarmConfirmationLog
@@ -224,7 +224,6 @@ async def get_worker_events(
     page: int = Query(default=1, ge=1),
     size: int = Query(default=30, le=100),
     sort_by: str = Query(default="id", description="sort by field (id, timestamp, camera_name, location, error_detail, status)"),
-    # order: str = Query(default="desc", regex="^(asc|desc)$"),
     order: str = Query(default="desc", regex="^(asc|desc)$"),
     start_time: Optional[int] = Query(default=None),
     end_time: Optional[int] = Query(default=None),
@@ -232,7 +231,7 @@ async def get_worker_events(
     try:
         stmt = select(WorkerEvent)
 
-        # Apply filters
+        # Apply filters (áp dụng trước khi count và sort/paginate)
         if query:
             stmt = stmt.where(
                 (WorkerEvent.camera_id.ilike(f"%{query}%")) |
@@ -240,8 +239,8 @@ async def get_worker_events(
             )
         if status is not None:
             stmt = stmt.where(WorkerEvent.status == status)
-        if event_id:
-            stmt = stmt.where(func.cast(WorkerEvent.id, String).ilike(f"%{event_id}%"))
+        if event_id:  # Sửa ở đây: dùng cast chuẩn
+            stmt = stmt.where(cast(WorkerEvent.id, String).ilike(f"%{event_id}%"))
         if error_code:
             stmt = stmt.where(WorkerEvent.error_detail.ilike(f"%{error_code}%"))
         if location:
@@ -255,13 +254,13 @@ async def get_worker_events(
                 WorkerEvent.timestamp <= datetime.datetime.fromtimestamp(end_time)
             )
 
-        # Count total (apply same filters)
+        # Count total (sử dụng subquery để inherit filters)
         count_subquery = stmt.subquery()
         count_stmt = select(func.count()).select_from(count_subquery)
         total_result = await session.execute(count_stmt)
         total = total_result.scalar() or 0
 
-        # Apply sorting
+        # Apply sorting (sau count, trước paginate)
         valid_sort_fields = ['id', 'timestamp', 'camera_name', 'location', 'error_detail', 'status']
         actual_sort_by = sort_by if sort_by in valid_sort_fields else 'id'
         if order == 'desc':
@@ -269,7 +268,7 @@ async def get_worker_events(
         else:
             stmt = stmt.order_by(getattr(WorkerEvent, actual_sort_by))
 
-        # Pagination
+        # Pagination (offset/limit trên stmt gốc, đã có filters/sort)
         stmt = stmt.offset((page - 1) * size).limit(size)
         result = await session.execute(stmt)
         events = result.scalars().all()
@@ -280,11 +279,15 @@ async def get_worker_events(
             "total": total,
             "current": page,
             "size": size,
-            "page": total_pages,
+            "page": total_pages,  # Đổi từ "page" thành "total_pages" nếu cần, nhưng giữ khớp response cũ
             "data": [e.dict() for e in events]
         }
 
     except Exception as e:
+        # Thêm logging để debug (optional)
+        import traceback
+        print(f"Error in get_worker_events: {str(e)}")
+        print(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Error fetching worker_events: {str(e)}")
     
     
