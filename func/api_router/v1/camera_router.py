@@ -2,6 +2,7 @@ from ast import List
 import datetime
 import os
 import shutil
+from tokenize import String
 from typing import Annotated, Optional, List, Union
 import uuid
 from zipfile import Path
@@ -215,49 +216,71 @@ async def create_worker_event(
 @router.get("/worker-events")
 async def get_worker_events(
     session: AsyncSession = Depends(get_session),
-    query: str = Query(default=None, description="search by camera_id or camera_name"),
+    query: Optional[str] = Query(default=None, description="search by camera_id or camera_name"),
+    status: Optional[int] = Query(default=None, description="filter by status (0=Pending, 1=OK, 2=NG)"),
+    event_id: Optional[str] = Query(default=None, description="partial match by event ID (as string)"),
+    error_code: Optional[str] = Query(default=None, description="partial match by error_detail"),
+    location: Optional[str] = Query(default=None, description="partial match by location"),
     page: int = Query(default=1, ge=1),
-    size: int = Query(default=30, le=100),  # ← Thay đổi từ 100 → 30
-    start_time: int = Query(default=None),
-    end_time: int = Query(default=None),
+    size: int = Query(default=30, le=100),
+    sort_by: str = Query(default="id", description="sort by field (id, timestamp, camera_name, location, error_detail, status)"),
+    # order: str = Query(default="desc", regex="^(asc|desc)$"),
+    order: str = Query(default="desc", regex="^(asc|desc)$"),
+    start_time: Optional[int] = Query(default=None),
+    end_time: Optional[int] = Query(default=None),
 ):
-    """
-    API lấy danh sách worker_events với filter + phân trang
-    """
     try:
         stmt = select(WorkerEvent)
 
-        # filter theo query
+        # Apply filters
         if query:
             stmt = stmt.where(
                 (WorkerEvent.camera_id.ilike(f"%{query}%")) |
                 (WorkerEvent.camera_name.ilike(f"%{query}%"))
             )
-
-        # filter theo thời gian
+        if status is not None:
+            stmt = stmt.where(WorkerEvent.status == status)
+        if event_id:
+            stmt = stmt.where(func.cast(WorkerEvent.id, String).ilike(f"%{event_id}%"))
+        if error_code:
+            stmt = stmt.where(WorkerEvent.error_detail.ilike(f"%{error_code}%"))
+        if location:
+            stmt = stmt.where(WorkerEvent.location.ilike(f"%{location}%"))
         if start_time:
             stmt = stmt.where(
-                WorkerEvent.timestamp >= datetime.datetime.fromtimestamp(start_time).isoformat()
+                WorkerEvent.timestamp >= datetime.datetime.fromtimestamp(start_time)
             )
         if end_time:
             stmt = stmt.where(
-                WorkerEvent.timestamp <= datetime.datetime.fromtimestamp(end_time).isoformat()
+                WorkerEvent.timestamp <= datetime.datetime.fromtimestamp(end_time)
             )
 
-        # count tổng
-        total_result = await session.execute(stmt)
-        total = len(total_result.scalars().all())
+        # Count total (apply same filters)
+        count_subquery = stmt.subquery()
+        count_stmt = select(func.count()).select_from(count_subquery)
+        total_result = await session.execute(count_stmt)
+        total = total_result.scalar() or 0
 
-        # phân trang
-        stmt = stmt.order_by(WorkerEvent.id.desc()).offset((page - 1) * size).limit(size)
+        # Apply sorting
+        valid_sort_fields = ['id', 'timestamp', 'camera_name', 'location', 'error_detail', 'status']
+        actual_sort_by = sort_by if sort_by in valid_sort_fields else 'id'
+        if order == 'desc':
+            stmt = stmt.order_by(getattr(WorkerEvent, actual_sort_by).desc())
+        else:
+            stmt = stmt.order_by(getattr(WorkerEvent, actual_sort_by))
+
+        # Pagination
+        stmt = stmt.offset((page - 1) * size).limit(size)
         result = await session.execute(stmt)
         events = result.scalars().all()
+
+        total_pages = (total // size) + (1 if total % size else 0)
 
         return {
             "total": total,
             "current": page,
             "size": size,
-            "page": (total // size) + (1 if total % size else 0),
+            "page": total_pages,
             "data": [e.dict() for e in events]
         }
 
