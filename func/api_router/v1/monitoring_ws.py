@@ -1,7 +1,6 @@
 import asyncio
 import json
 import time
-import yaml
 import os
 from typing import Dict, Any, Set, List
 from concurrent.futures import ThreadPoolExecutor
@@ -10,8 +9,13 @@ import requests
 import psutil
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+# Import Config class từ config.py
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+from config import Config
+
 try:
-    import pynvml
+    import pynvml # type: ignore
     pynvml.nvmlInit()
     gpu_available = True
 except (ImportError, pynvml.NVMLError):
@@ -26,13 +30,26 @@ router = APIRouter(
 # ThreadPoolExecutor để chạy các hàm blocking
 executor = ThreadPoolExecutor()
 
-# Load config
+# Load config using Config class
 def load_config():
-    """Load configuration from config.yaml"""
+    """Load configuration from config.yaml using Config class"""
     try:
-        config_path = os.path.join(os.path.dirname(__file__), 'config.yaml')
-        with open(config_path, 'r', encoding='utf-8') as file:
-            return yaml.safe_load(file)
+        # Tìm đường dẫn tới config/config.yaml từ project root
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+        config_path = os.path.join(project_root, 'config', 'config.yaml')
+        
+        # Fallback: thử từ current working directory
+        if not os.path.exists(config_path):
+            config_path = os.path.join(os.getcwd(), 'config', 'config.yaml')
+        
+        print(f"Loading config from: {config_path}")
+        
+        config_manager = Config(config_path)
+        config_manager.load_config()
+        config_obj = config_manager.get_config()
+        
+        # Convert ConfigObject to dict
+        return config_obj.to_dict()
     except Exception as e:
         print(f"Error loading config: {e}")
         return {}
@@ -85,8 +102,8 @@ def get_system_info_blocking() -> Dict[str, Any]:
         "ram": ram_percent,
         "disk": disk_percent,
         "gpu": gpu_percent,
-        "net_up": net_up,     # MB/s
-        "net_down": net_down # MB/s
+        "net_up": net_up,     # bytes/sec
+        "net_down": net_down # bytes/sec
     }
 
 # Async wrapper để chạy trong thread pool
@@ -97,12 +114,19 @@ async def get_system_info() -> Dict[str, Any]:
 def get_mediamtx_servers() -> List[Dict[str, Any]]:
     """Get MediaMTX servers from config"""
     servers = config.get('mediamtx_servers', [])
+    
+    print(f"Debug - Raw config mediamtx_servers: {servers}")
+    
     if not servers:
         # Fallback to localhost if no config found
+        print("No MediaMTX servers found in config, using localhost fallback")
         return [{"ip": "localhost", "port": 9997, "enabled": True}]
     
     # Only return enabled servers
-    return [server for server in servers if server.get('enabled', True)]
+    enabled_servers = [server for server in servers if server.get('enabled', True)]
+    print(f"Debug - Enabled servers: {enabled_servers}")
+    
+    return enabled_servers
 
 def get_mediamtx_active_streams_from_server(server_ip: str, server_port: int = 9997) -> Set[str]:
     """Get active camera streams from a single MediaMTX server"""
