@@ -185,5 +185,5 @@ static/
 
 # PyInstaller
 build/
-dist/
+dist*/
 *.spec
