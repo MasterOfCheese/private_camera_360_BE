@@ -247,12 +247,14 @@ async def get_worker_events(
             stmt = stmt.where(WorkerEvent.location.ilike(f"%{location}%"))
         if start_time:
             stmt = stmt.where(
-                WorkerEvent.timestamp >= datetime.datetime.fromtimestamp(start_time)
+                WorkerEvent.timestamp >= datetime.datetime.fromtimestamp(start_time).strftime('%Y-%m-%d')
             )
+            # print("start time: ",datetime.datetime.fromtimestamp(start_time).strftime('%Y-%m-%d'))
         if end_time:
             stmt = stmt.where(
-                WorkerEvent.timestamp <= datetime.datetime.fromtimestamp(end_time)
+                WorkerEvent.timestamp <= datetime.datetime.fromtimestamp(end_time).strftime('%Y-%m-%d')
             )
+            # print("end time: ", datetime.datetime.fromtimestamp(end_time).strftime('%Y-%m-%d'))
 
         # Count total (sử dụng subquery để inherit filters)
         count_subquery = stmt.subquery()
