@@ -101,11 +101,18 @@ class AlarmConfirmationRequest(BaseModel):
     employee_confirm_id: str
     client_ip: Optional[str] = None # Cho phép IP null vì có thể không lấy được
     
+# Tạo model đơn giản giống Smart Gate
+class WorkerEventActionRequest(BaseModel):
+    ID: int
+    action: str  # "OK" hoặc "NG"
+    # status: str  # "Pending", "OK", "NG"
+
+# Đơn giản hóa WorkerEventConfirmationLog - bỏ client_ip và employee_confirm_id
 class WorkerEventConfirmationLog(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     worker_event_id: int = Field(foreign_key="workerevent.id", index=True)
-    # employee_confirm_id: str
-    client_ip: str
+    action: str  # "OK" hoặc "NG"
+    # status: str  # "Pending", "OK", "NG" 
     logged_at: datetime.datetime = Field(default_factory=datetime.datetime.now)
     
 # DB Model Public for api

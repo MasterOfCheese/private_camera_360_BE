@@ -3,16 +3,17 @@ import datetime
 import os
 import shutil
 from typing import Annotated, Optional, List, Union
+from sqlalchemy import String
 import uuid
 from zipfile import Path
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, UploadFile, File, Request
 from PIL import Image
 import io
 import base64
-from sqlalchemy import func
+from sqlalchemy import func, cast
 from sqlmodel import select, delete
 from func.auth.v1.auth import get_current_user
-from model.db_model import Alarm, CameraConfig, CameraConfigCreate, CameraConfigPublic, CameraConfigPublicWithTags, CameraConfigTagLink, CameraConfigUpdate, Tag, WorkerEvent, WorkerEventConfirmationLog, get_session, UserPublic, AlarmConfirmationLog
+from model.db_model import Alarm, CameraConfig, CameraConfigCreate, CameraConfigPublic, CameraConfigPublicWithTags, CameraConfigTagLink, CameraConfigUpdate, Tag, WorkerEvent, WorkerEventActionRequest, WorkerEventConfirmationLog, get_session, UserPublic, AlarmConfirmationLog
 from model.db_model import AlarmConfirmationRequest
 from sqlalchemy.ext.asyncio import AsyncSession
 router = APIRouter(prefix="/v1/cameras",tags=["cameras"])
@@ -23,82 +24,70 @@ async def decline_worker_event_by_id(
     *,
     session: AsyncSession = Depends(get_session),
     worker_event_id: int,
-    request_data: AlarmConfirmationRequest,
+    request_data: WorkerEventActionRequest,
     request: Request
 ):
     """
-    Cập nhật trạng thái của một sự kiện worker thành 'Declined' dựa trên ID.
+    Decline worker event - Simplified without status field
     """
     try:
         worker_event = await session.get(WorkerEvent, worker_event_id)
         if not worker_event:
             raise HTTPException(status_code=404, detail="Worker event not found")
 
-        # Cập nhật trạng thái của worker event thành 2 (Decline)
+        # Update status to 2 (declined)
         worker_event.status = 2
         session.add(worker_event)
 
-        # Lấy IP của client
-        client_ip = request.client.host
-
-        # Tạo bản ghi log mới
-        # Nếu bạn có một bảng log riêng cho WorkerEvent thì nên dùng nó
-        # Còn không thì dùng chung với AlarmConfirmationLog cũng được
+        # Create simplified log without status field
         new_log = WorkerEventConfirmationLog(
-            worker_event_id=worker_event_id,  # Đúng field name
-            # employee_confirm_id=request_data.employee_confirm_id,
-            client_ip=client_ip,
+            worker_event_id=worker_event_id,
+            action=request_data.action  # "NG"
+            # Remove: status=request_data.status
         )
         session.add(new_log)
 
-        # Commit thay đổi vào database
         await session.commit()
         await session.refresh(worker_event)
         await session.refresh(new_log)
 
-        # Trả về kết quả thành công
         return {
-            "message": "Worker event declined and logged successfully",
+            "message": "Worker event declined successfully", 
             "event": worker_event,
             "log": new_log
         }
     except HTTPException as e:
-        # Nếu là lỗi HTTPException thì raise lại
         raise e
     except Exception as e:
-        # Xử lý các lỗi ngoại lệ khác
         await session.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+    
 
-# Cập nhật endpoint để xử lý trạng thái 'Accept'
 @router.patch("/worker-events/{worker_event_id}/accept")
 async def accept_worker_event_by_id(
     *,
     session: AsyncSession = Depends(get_session),
     worker_event_id: int,
-    request_data: AlarmConfirmationRequest,
+    request_data: WorkerEventActionRequest,
     request: Request
 ):
     """
-    Cập nhật trạng thái của một sự kiện worker thành 'Accepted' dựa trên ID.
+    Accept worker event - Simplified without status field
     """
     try:
         worker_event = await session.get(WorkerEvent, worker_event_id)
         if not worker_event:
             raise HTTPException(status_code=404, detail="Worker event not found")
 
-        # Cập nhật trạng thái của worker event thành 1 (Accept)
+        # Update status to 1 (accepted)
         worker_event.status = 1
         session.add(worker_event)
         
-        # Lấy IP của client
-        client_ip = request.client.host
-
-        # Tạo bản ghi log mới
+        # Create simplified log without status field
         new_log = WorkerEventConfirmationLog(
-            worker_event_id=worker_event_id,  # Đúng field name
-            # employee_confirm_id=request_data.employee_confirm_id,
-            client_ip=client_ip,
+            worker_event_id=worker_event_id,
+            action=request_data.action  # "OK"
+            # Remove: status=request_data.status
         )
         session.add(new_log)
 
@@ -107,7 +96,7 @@ async def accept_worker_event_by_id(
         await session.refresh(new_log)
 
         return {
-            "message": "Worker event accepted and logged successfully",
+            "message": "Worker event accepted successfully",
             "event": worker_event,
             "log": new_log
         }
@@ -227,53 +216,80 @@ async def create_worker_event(
 @router.get("/worker-events")
 async def get_worker_events(
     session: AsyncSession = Depends(get_session),
-    query: str = Query(default=None, description="search by camera_id or camera_name"),
+    query: Optional[str] = Query(default=None, description="search by camera_id or camera_name"),
+    status: Optional[int] = Query(default=None, description="filter by status (0=Pending, 1=OK, 2=NG)"),
+    event_id: Optional[str] = Query(default=None, description="partial match by event ID (as string)"),
+    error_code: Optional[str] = Query(default=None, description="partial match by error_detail"),
+    location: Optional[str] = Query(default=None, description="partial match by location"),
     page: int = Query(default=1, ge=1),
-    size: int = Query(default=30, le=100),  # ← Thay đổi từ 100 → 30
-    start_time: int = Query(default=None),
-    end_time: int = Query(default=None),
+    size: int = Query(default=30, le=100),
+    sort_by: str = Query(default="id", description="sort by field (id, timestamp, camera_name, location, error_detail, status)"),
+    order: str = Query(default="desc", regex="^(asc|desc)$"),
+    start_time: Optional[int] = Query(default=None),
+    end_time: Optional[int] = Query(default=None),
 ):
-    """
-    API lấy danh sách worker_events với filter + phân trang
-    """
     try:
         stmt = select(WorkerEvent)
 
-        # filter theo query
+        # Apply filters (áp dụng trước khi count và sort/paginate)
         if query:
             stmt = stmt.where(
                 (WorkerEvent.camera_id.ilike(f"%{query}%")) |
                 (WorkerEvent.camera_name.ilike(f"%{query}%"))
             )
-
-        # filter theo thời gian
+        if status is not None:
+            stmt = stmt.where(WorkerEvent.status == status)
+        if event_id:  # Sửa ở đây: dùng cast chuẩn
+            stmt = stmt.where(cast(WorkerEvent.id, String).ilike(f"%{event_id}%"))
+        if error_code:
+            stmt = stmt.where(WorkerEvent.error_detail.ilike(f"%{error_code}%"))
+        if location:
+            stmt = stmt.where(WorkerEvent.location.ilike(f"%{location}%"))
         if start_time:
             stmt = stmt.where(
-                WorkerEvent.timestamp >= datetime.datetime.fromtimestamp(start_time).isoformat()
+                WorkerEvent.timestamp >= datetime.datetime.fromtimestamp(start_time).strftime('%Y-%m-%d')
             )
+            # print("start time: ",datetime.datetime.fromtimestamp(start_time).strftime('%Y-%m-%d'))
         if end_time:
             stmt = stmt.where(
-                WorkerEvent.timestamp <= datetime.datetime.fromtimestamp(end_time).isoformat()
+                WorkerEvent.timestamp <= datetime.datetime.fromtimestamp(end_time).strftime('%Y-%m-%d')
             )
+            # print("end time: ", datetime.datetime.fromtimestamp(end_time).strftime('%Y-%m-%d'))
 
-        # count tổng
-        total_result = await session.execute(stmt)
-        total = len(total_result.scalars().all())
+        # Count total (sử dụng subquery để inherit filters)
+        count_subquery = stmt.subquery()
+        count_stmt = select(func.count()).select_from(count_subquery)
+        total_result = await session.execute(count_stmt)
+        total = total_result.scalar() or 0
 
-        # phân trang
-        stmt = stmt.order_by(WorkerEvent.id.desc()).offset((page - 1) * size).limit(size)
+        # Apply sorting (sau count, trước paginate)
+        valid_sort_fields = ['id', 'timestamp', 'camera_name', 'location', 'error_detail', 'status']
+        actual_sort_by = sort_by if sort_by in valid_sort_fields else 'id'
+        if order == 'desc':
+            stmt = stmt.order_by(getattr(WorkerEvent, actual_sort_by).desc())
+        else:
+            stmt = stmt.order_by(getattr(WorkerEvent, actual_sort_by))
+
+        # Pagination (offset/limit trên stmt gốc, đã có filters/sort)
+        stmt = stmt.offset((page - 1) * size).limit(size)
         result = await session.execute(stmt)
         events = result.scalars().all()
+
+        total_pages = (total // size) + (1 if total % size else 0)
 
         return {
             "total": total,
             "current": page,
             "size": size,
-            "page": (total // size) + (1 if total % size else 0),
+            "page": total_pages,  # Đổi từ "page" thành "total_pages" nếu cần, nhưng giữ khớp response cũ
             "data": [e.dict() for e in events]
         }
 
     except Exception as e:
+        # Thêm logging để debug (optional)
+        import traceback
+        print(f"Error in get_worker_events: {str(e)}")
+        print(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Error fetching worker_events: {str(e)}")
     
     

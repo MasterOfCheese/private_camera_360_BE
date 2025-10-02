@@ -3,3 +3,22 @@ host: 0.0.0.0
 log_dir: logs
 port: 8005
 token_expiry_minutes: 1440
+
+# MediaMTX servers configuration
+mediamtx_servers:
+  - ip: "10.72.216.112"
+    port: 9997
+    enabled: true
+  - ip: "localhost"
+    port: 9997
+    enabled: true
+  - ip: "127.0.0.1"
+    port: 9997
+    enabled: true
+  - ip: "10.72.216.149"
+    port: 9997
+    enabled: true
+
+  # - ip: "10.72.216.34"
+  #   port: 9997
+  #   enabled: true
