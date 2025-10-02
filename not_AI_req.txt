@@ -95,3 +95,4 @@ yarl
 zipp
 faker
 pynvml
+pillow
