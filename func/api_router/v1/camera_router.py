@@ -131,7 +131,7 @@ async def create_worker_event(
 
         # 2. Tạo timestamp
         current_time = datetime.datetime.now()
-        timestamp_str = current_time.strftime('%Y-%m-%d %H:%M:%S')
+        timestamp_int = int(current_time.timestamp())
 
         # 3. Tạo thư mục lưu trữ
         date_folder = current_time.strftime('%Y-%m-%d')
@@ -181,7 +181,7 @@ async def create_worker_event(
             ai_log_path=ai_log_relative_path,
             location=camera.location,
             camera_name=camera.name,
-            timestamp=timestamp_str,
+            timestamp=timestamp_int,
             is_confirmed=False
         )
         session.add(new_event)
@@ -246,15 +246,11 @@ async def get_worker_events(
         if location:
             stmt = stmt.where(WorkerEvent.location.ilike(f"%{location}%"))
         if start_time:
-            stmt = stmt.where(
-                WorkerEvent.timestamp >= datetime.datetime.fromtimestamp(start_time).strftime('%Y-%m-%d')
-            )
-            # print("start time: ",datetime.datetime.fromtimestamp(start_time).strftime('%Y-%m-%d'))
+            stmt = stmt.where(WorkerEvent.timestamp >= start_time)
+            print('Start time: ', start_time)
         if end_time:
-            stmt = stmt.where(
-                WorkerEvent.timestamp <= datetime.datetime.fromtimestamp(end_time).strftime('%Y-%m-%d')
-            )
-            # print("end time: ", datetime.datetime.fromtimestamp(end_time).strftime('%Y-%m-%d'))
+            stmt = stmt.where(WorkerEvent.timestamp <= end_time)
+            print('Start time: ', end_time)
 
         # Count total (sử dụng subquery để inherit filters)
         count_subquery = stmt.subquery()
@@ -317,7 +313,7 @@ async def create_alarm(
         
         # 2. Tạo timestamp hiện tại
         current_time = datetime.datetime.now()
-        timestamp_str = current_time.strftime('%Y-%m-%d %H:%M:%S')
+        timestamp_int = int(current_time.timestamp())
         
         # 3. Tạo thư mục lưu trữ theo cấu trúc: static/alarms/YYYY-MM-DD/camera_id/
         date_folder = current_time.strftime('%Y-%m-%d')
@@ -371,7 +367,7 @@ async def create_alarm(
                 "location": camera.location,
             },
             "error_detail": error_detail,
-            "timestamp": timestamp_str,
+            "timestamp": timestamp_int,
             "files": {
                 "image": img_relative_path,
                 "video": video_relative_path,
@@ -395,7 +391,7 @@ async def create_alarm(
             video_error=video_relative_path,
             ai_log_path=ai_log_relative_path,   # ✅ đúng tên field
             location=camera.location,
-            timestamp=timestamp_str,
+            timestamp=timestamp_int,
             metadata_path=metadata_relative_path,
             camera_name=camera.name,            # ✅ thêm camera_name
             alarm_uuid=alarm_uuid,

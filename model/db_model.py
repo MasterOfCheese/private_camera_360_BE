@@ -63,7 +63,7 @@ class Alarm(SQLModel, table=True):
     camera_id: str
     error_detail: str
     location: str
-    timestamp: str
+    timestamp: int
     is_confirmed: bool = Field(default=False)  # Trạng thái đã xác nhận hay chưa
     alarm_uuid: Optional[str] = Field(default=None, index=True)  # UUID unique cho alarm
     metadata_path: Optional[str] = Field(default=None)    # Đường dẫn file metadata JSON
@@ -89,7 +89,7 @@ class WorkerEvent(SQLModel, table=True):
     camera_id: str
     error_detail: str
     location: str
-    timestamp: str
+    timestamp: int
     status: int = Field(default=0)  # 0: Pending, 1: Accept, 2: Decline
     img_error: Optional[str] = Field(default=None, nullable=True)
     video_error: Optional[str] = Field(default=None, nullable=True)
