@@ -9,6 +9,26 @@ import uvicorn
 from func.config import Config
 from pydantic import BaseModel
 
+# class token để làm OAuth2
+class UserPublic(SQLModel):
+    id: int
+    username: str
+    config: bool
+
+# ===== Auth DTOs (Data Transfer Objects) =====
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+    username: str  # Thay vì "user" cho rõ ràng
+
+class TokenData(BaseModel):
+    username: Optional[str] = None
+
+class UserInfo(BaseModel):
+    """Response cho /users/me endpoint"""
+    username: str
+    config: bool
+
 # Base Model without db connection
 class CameraConfigBase(SQLModel):
     name: str = Field(index=True)
@@ -54,9 +74,10 @@ class CameraConfig(CameraConfigBase, table=True):
         sa_relationship_kwargs={"lazy": "selectin"} # Use selectin loading for better performance
     )
     
+# ✅ Fix: CHỈ GIỮ 1 USER CLASS (INHERIT TỪ USERBASE, XÓA STANDALONE TRÊN)
 class User(UserBase, table=True):
-    __tablename__ = "user" # Explicit table name
-    id: Optional[int] = Field(default=None, primary_key=True) # Optional for creation
+    __tablename__ = "user"  # Explicit table name
+    id: Optional[int] = Field(default=None, primary_key=True)  # Optional for creation
     
 class Alarm(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
