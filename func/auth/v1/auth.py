@@ -1,55 +1,110 @@
+# auth.py - Improved OAuth System with config.yaml
 import datetime
 import os
-import base64
-from typing import Optional
-from fastapi import Depends, APIRouter, HTTPException, Request, status, Query
+import sys
+from typing import Optional, Literal
+from fastapi import Depends, APIRouter, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlmodel import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from model.db_model import User, UserPublic, get_session
+from model.db_model import User, UserPublic, get_session, Token, UserInfo
 from passlib.context import CryptContext
 import jwt
 import requests
-from dotenv import load_dotenv
-from urllib.parse import urlparse, urlencode
 
-load_dotenv()
+# Import Config class
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+from config import Config
 
 oauth_scheme = OAuth2PasswordBearer(tokenUrl="v1/auth/token")
 
-SECRET_KEY = os.getenv("SECRET_KEY", "AI2025")
-GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID", "ov23lipbkAa7YQYhp0eX")
-GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET", "bdba6816d2909d0fec3012ce7f6d66acfd7d7bf7")
-GITHUB_REDIRECT_URI = "http://localhost:8005/v1/auth/github/callback"
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 15
+# Load config từ config.yaml
+def load_oauth_config():
+    """Load OAuth configuration from config.yaml"""
+    try:
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+        config_path = os.path.join(project_root, 'config', 'config.yaml')
+        
+        if not os.path.exists(config_path):
+            config_path = os.path.join(os.getcwd(), 'config', 'config.yaml')
+        
+        config_manager = Config(config_path)
+        config_manager.load_config()
+        config_obj = config_manager.get_config()
+        
+        return config_obj.to_dict()
+    except Exception as e:
+        print(f"Error loading OAuth config: {e}")
+        # Fallback to environment variables
+        return {
+            'oauth': {
+                'secret_key': os.getenv("SECRET_KEY", "AI2025"),
+                'algorithm': 'HS256',
+                'access_token_expire_minutes': 15,
+                'providers': {}
+            }
+        }
+
+# Load config at startup
+APP_CONFIG = load_oauth_config()
+OAUTH_CONFIG = APP_CONFIG.get('oauth', {})
+
+SECRET_KEY = OAUTH_CONFIG.get('secret_key', 'AI2025')
+ALGORITHM = OAUTH_CONFIG.get('algorithm', 'HS256')
+ACCESS_TOKEN_EXPIRE_MINUTES = OAUTH_CONFIG.get('access_token_expire_minutes', 15)
+
+# Build OAuth Provider Configurations from config
+def build_oauth_providers():
+    """Build OAuth providers configuration from config.yaml"""
+    providers = {}
+    config_providers = OAUTH_CONFIG.get('providers', {})
+    
+    for provider_name, provider_config in config_providers.items():
+        if not provider_config.get('client_id') or not provider_config.get('client_secret'):
+            # Skip providers without credentials
+            continue
+            
+        providers[provider_name] = {
+            "client_id": provider_config.get('client_id'),
+            "client_secret": provider_config.get('client_secret'),
+            "token_url": provider_config.get('token_url'),
+            "user_info_url": provider_config.get('user_info_url'),
+            "user_info_headers": lambda token: {"Authorization": f"Bearer {token}"} 
+                if provider_name != "github" 
+                else {"Authorization": f"token {token}"},
+            "username_field": provider_config.get('username_field', 'username')
+        }
+    
+    return providers
+
+OAUTH_PROVIDERS = build_oauth_providers()
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 OAUTH_DUMMY_HASH = pwd_context.hash("")
 
-class Token(BaseModel):
-    access_token: str
-    token_type: str
-    user: str
+router = APIRouter(prefix='/v1/auth', tags=['auth'])
 
-class TokenData(BaseModel):
-    username: Optional[str] = None
-
-class UserReturn(BaseModel):
-    username: str
-    config: Optional[bool] = None
+def get_password_hash(password: str) -> str:
+    return pwd_context.hash(password)
 
 def verify_password(plain_password, hashed_password): 
     if hashed_password == OAUTH_DUMMY_HASH:
         return False
     return pwd_context.verify(plain_password, hashed_password)
 
-def get_password_hash(password):
-    return pwd_context.hash(password)
+def create_access_token(data: dict, expires_delta: int = None):
+    expire = datetime.datetime.utcnow() + datetime.timedelta(
+        minutes=expires_delta or ACCESS_TOKEN_EXPIRE_MINUTES
+    )
+    to_encode = data.copy()
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
-async def get_current_user(token: str = Depends(oauth_scheme), session: AsyncSession = Depends(get_session)) -> UserPublic: 
+async def get_current_user(
+    token: str = Depends(oauth_scheme), 
+    session: AsyncSession = Depends(get_session)
+) -> UserPublic: 
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -60,7 +115,6 @@ async def get_current_user(token: str = Depends(oauth_scheme), session: AsyncSes
         username: str = payload.get("sub")
         if username is None:
             raise credentials_exception
-        token_data = TokenData(username=username)
     except jwt.ExpiredSignatureError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -70,21 +124,13 @@ async def get_current_user(token: str = Depends(oauth_scheme), session: AsyncSes
     except jwt.PyJWTError:
         raise credentials_exception
 
-    result = await session.execute(select(User).where(User.username == token_data.username))
+    result = await session.execute(select(User).where(User.username == username))
     user = result.scalars().first()
     if user is None:
         raise credentials_exception
     return UserPublic.from_orm(user)
 
-def create_access_token(data: dict, expires_delta: int = None):
-    expire = datetime.datetime.utcnow() + datetime.timedelta(
-        minutes=expires_delta or ACCESS_TOKEN_EXPIRE_MINUTES
-    )
-    to_encode = data.copy()
-    to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-
-router = APIRouter(prefix='/v1/auth', tags=['auth'])
+# ===== Standard Login =====
 
 @router.post("/token", response_model=Token)
 async def login_for_access_token(
@@ -92,6 +138,7 @@ async def login_for_access_token(
     session: AsyncSession = Depends(get_session),
     request: Request = None
 ):
+    """Standard username/password login"""
     result = await session.execute(select(User).where(User.username == form_data.username))
     user = result.scalars().first()
 
@@ -102,80 +149,146 @@ async def login_for_access_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    expiry_minutes = getattr(request.app.state.config, 'token_expiry_minutes', ACCESS_TOKEN_EXPIRE_MINUTES) if request else ACCESS_TOKEN_EXPIRE_MINUTES
-    access_token = create_access_token(data={"sub": user.username}, expires_delta=expiry_minutes)
+    expiry_minutes = getattr(
+        request.app.state.config, 
+        'token_expiry_minutes', 
+        ACCESS_TOKEN_EXPIRE_MINUTES
+    ) if request else ACCESS_TOKEN_EXPIRE_MINUTES
+    
+    access_token = create_access_token(
+        data={"sub": user.username}, 
+        expires_delta=expiry_minutes
+    )
 
-    return Token(access_token=access_token, token_type="bearer", user=user.username)
+    return Token(
+        access_token=access_token, 
+        token_type="bearer", 
+        username=user.username
+    )
 
-@router.get("/users/me", response_model=UserReturn)
+@router.get("/users/me", response_model=UserInfo)
 async def read_users_me(current_user: UserPublic = Depends(get_current_user)):
-    return {"username": current_user.username, "config": current_user.config}
+    """Get current user info"""
+    return UserInfo(username=current_user.username, config=current_user.config)
 
-@router.get("/github")
-async def github_login(return_to: str = Query(...)):
-    state = base64.urlsafe_b64encode(return_to.encode('utf-8')).decode('utf-8').rstrip('=')
-    params = urlencode({
-        'client_id': GITHUB_CLIENT_ID,
-        'redirect_uri': GITHUB_REDIRECT_URI,
-        'scope': 'user',
-        'state': state
-    })
-    return RedirectResponse(f"https://github.com/login/oauth/authorize?{params}")
+# ===== OAuth Login - Unified Endpoint =====
 
-@router.get("/github/callback")
-async def github_callback(code: str = Query(...), state: str = Query(...), session: AsyncSession = Depends(get_session)):
-    if not code:
-        raise HTTPException(status_code=400, detail="No code provided")
+class OAuthLoginRequest(BaseModel):
+    provider: str  # Dynamic based on config.yaml
+    code: str
+    state: Optional[str] = None
 
-    # Decode state
+@router.post("/oauth", response_model=Token)
+async def oauth_login(
+    request: OAuthLoginRequest,
+    session: AsyncSession = Depends(get_session)
+):
+    """
+    Unified OAuth login endpoint
+    Supports multiple providers configured in config.yaml
+    """
+    provider_name = request.provider
+    code = request.code
+
+    # 1. Get provider config
+    provider_config = OAUTH_PROVIDERS.get(provider_name)
+    if not provider_config:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Unsupported OAuth provider: {provider_name}"
+        )
+
+    # Validate provider credentials
+    if not provider_config["client_id"] or not provider_config["client_secret"]:
+        raise HTTPException(
+            status_code=500,
+            detail=f"OAuth provider '{provider_name}' is not configured properly"
+        )
+
+    # 2. Exchange code for access token
     try:
-        padded_state = state + '=' * (4 - len(state) % 4)
-        return_to = base64.urlsafe_b64decode(padded_state).decode('utf-8')
-    except Exception as e:
-        raise HTTPException(status_code=400, detail="Invalid state")
+        token_response = requests.post(
+            provider_config["token_url"],
+            headers={'Accept': 'application/json'},
+            data={
+                'client_id': provider_config["client_id"],
+                'client_secret': provider_config["client_secret"],
+                'code': code,
+            },
+            timeout=10
+        )
 
-    # Exchange code for GitHub token
-    token_resp = requests.post(
-        "https://github.com/login/oauth/access_token",
-        headers={'Accept': 'application/json'},
-        data={
-            'client_id': GITHUB_CLIENT_ID,
-            'client_secret': GITHUB_CLIENT_SECRET,
-            'code': code
-        }
-    )
+        if token_response.status_code != 200:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{provider_name.title()} token exchange failed: {token_response.text}"
+            )
 
-    if token_resp.status_code != 200:
-        raise HTTPException(status_code=400, detail=f"GitHub token exchange failed: {token_resp.status_code}")
+        token_data = token_response.json()
+        provider_access_token = token_data.get('access_token')
 
-    gh_token = token_resp.json().get('access_token')
-    if not gh_token:
-        raise HTTPException(status_code=400, detail="No access token received")
+        if not provider_access_token:
+            error_msg = token_data.get('error_description', 'No access token received')
+            raise HTTPException(status_code=400, detail=error_msg)
 
-    # Get GitHub user info
-    user_resp = requests.get(
-        "https://api.github.com/user",
-        headers={'Authorization': f'token {gh_token}'}
-    )
-    if user_resp.status_code != 200:
-        raise HTTPException(status_code=400, detail="Failed to fetch user info")
+    except requests.RequestException as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to connect to {provider_name.title()}: {str(e)}"
+        )
 
-    username = user_resp.json()['login']
+    # 3. Get user info from provider
+    try:
+        user_info_response = requests.get(
+            provider_config["user_info_url"],
+            headers=provider_config["user_info_headers"](provider_access_token),
+            timeout=10
+        )
 
-    # Check if user exists - REJECT if not
+        if user_info_response.status_code != 200:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Failed to fetch user info from {provider_name.title()}"
+            )
+
+        user_info = user_info_response.json()
+        username = user_info.get(provider_config["username_field"])
+
+        if not username:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Username not found in {provider_name.title()} response"
+            )
+
+    except requests.RequestException as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch user info from {provider_name.title()}: {str(e)}"
+        )
+
+    # 4. Check if user exists in database
     result = await session.execute(select(User).where(User.username == username))
     user = result.scalars().first()
+
     if not user:
         raise HTTPException(
             status_code=404,
-            detail="The account not registered in system. Please contact Nam đẹp trai to register."
+            detail=f"User '{username}' is not registered. Please contact administrator at FAI - AI Department."
         )
 
-    # Create internal token and redirect (only if user exists)
+    # 5. Create internal JWT token
     access_token = create_access_token(data={"sub": username})
-    parsed = urlparse(return_to)
-    hash_path = parsed.fragment or '/'
-    query_string = urlencode({'auth_token': access_token, 'username': username})
-    redirect_url = f"{parsed.scheme}://{parsed.netloc}/#{hash_path}?{query_string}"
-    
-    return RedirectResponse(redirect_url, status_code=302)
+
+    return Token(
+        access_token=access_token,
+        token_type="bearer",
+        username=user.username
+    )
+
+# ===== Endpoint để list available OAuth providers =====
+@router.get("/oauth/providers")
+async def get_oauth_providers():
+    """Get list of configured OAuth providers"""
+    return {
+        "providers": list(OAUTH_PROVIDERS.keys())
+    }
