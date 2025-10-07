@@ -1,5 +1,0 @@
-db_connection_string: postgresql+asyncpg://postgres:123456@127.0.0.1:5432/packing_vietnam
-host: 0.0.0.0
-log_dir: logs
-port: 8005
-token_expiry_minutes: 1440

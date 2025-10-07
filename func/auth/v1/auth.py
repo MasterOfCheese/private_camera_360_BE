@@ -252,6 +252,7 @@ async def oauth_login(
             )
 
         user_info = user_info_response.json()
+        print("user info:", user_info)  # Debugging line
         username = user_info.get(provider_config["username_field"])
 
         if not username:
