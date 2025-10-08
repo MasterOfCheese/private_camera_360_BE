@@ -215,7 +215,8 @@ async def oauth_login(
                 'client_secret': provider_config["client_secret"],
                 'code': code,
             },
-            timeout=10
+            timeout=10,
+            verify=False
         )
 
         if token_response.status_code != 200:
@@ -242,7 +243,7 @@ async def oauth_login(
         user_info_response = requests.get(
             provider_config["user_info_url"],
             headers=provider_config["user_info_headers"](provider_access_token),
-            timeout=10
+            timeout=10,verify=False
         )
 
         if user_info_response.status_code != 200:
@@ -253,7 +254,7 @@ async def oauth_login(
 
         user_info = user_info_response.json()
         print("user info:", user_info)  # Debugging line
-        username = user_info.get(provider_config["username_field"])
+        username = user_info.get("result",{}).get("username","forbidden")
 
         if not username:
             raise HTTPException(

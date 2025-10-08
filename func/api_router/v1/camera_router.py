@@ -221,8 +221,8 @@ async def get_worker_events(
     event_id: Optional[str] = Query(default=None, description="partial match by event ID (as string)"),
     error_code: Optional[str] = Query(default=None, description="partial match by error_detail"),
     location: Optional[str] = Query(default=None, description="partial match by location"),
-    page: int = Query(default=1, ge=1),
-    size: int = Query(default=30, le=100),
+    page: int = Query(default=1),
+    size: int = Query(default=30),
     sort_by: str = Query(default="id", description="sort by field (id, timestamp, camera_name, location, error_detail, status)"),
     order: str = Query(default="desc", regex="^(asc|desc)$"),
     start_time: Optional[int] = Query(default=None),
@@ -510,7 +510,7 @@ async def get_alarm_files(
 async def get_unconfirmed_alarms(
     *,
     session: AsyncSession = Depends(get_session),
-    limit: int = Query(default=100, le=100),
+    limit: int = Query(default=100),
 ):
     """Lấy danh sách tất cả các cảnh báo chưa được xác nhận."""
     try:
@@ -620,7 +620,7 @@ async def get_alarms(
     *,
     session: AsyncSession = Depends(get_session),
     offset: int = 0,
-    limit: int = Query(default=100, le=100),
+    limit: int = Query(default=100),
     camera_id: Optional[str] = Query(default=None),
 ):
     """
@@ -690,7 +690,7 @@ async def create_camera_config(
     return db_camera_config
 
 # @router.get("/", response_model=list[CameraConfigPublicWithTags])
-# def read_camera_configs(*, session: Session = Depends(get_session), offset: int = 0, limit: int = Query(default=100, le=100), user: Annotated[str, Depends(get_current_user)], tag_ids: list[int] = Query(default=None)):
+# def read_camera_configs(*, session: Session = Depends(get_session), offset: int = 0, limit: int = Query(default=100), user: Annotated[str, Depends(get_current_user)], tag_ids: list[int] = Query(default=None)):
 #     for item in tag_ids:
 #         print(item)
 #     if not hasattr(user, 'username') or user.username != "admin":
@@ -705,7 +705,7 @@ async def read_camera_configs(
     *,
     session: AsyncSession = Depends(get_session),
     offset: int = 0,
-    limit: int = Query(default=100, le=100),
+    limit: int = Query(default=100),
     user: Annotated[UserPublic, Depends(get_current_user)],
     tag_ids: list[int] = Query(default=None),
     name: Optional[str] = Query(default=None),

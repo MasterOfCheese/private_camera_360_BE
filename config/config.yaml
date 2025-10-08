@@ -26,10 +26,10 @@ oauth:
   access_token_expire_minutes: 1440
   
   providers:
-    github:
-      client_id: "Ov23lipbkAa7YQYhp0eX"
-      client_secret: "bdba6816d2909d0fec3012ce7f6d66acfd7d7bf7"
-      # redirect_uri: "http://172.16.0.2:8005/v2/#/auth"
-      token_url: "https://github.com/login/oauth/access_token"
-      user_info_url: "https://api.github.com/user"
-      username_field: "login"
+    internal:
+      client_id: "iic-ai"
+      client_secret: "Foxconn168!!"
+      token_url: "https://10.220.7.195/oauth-service/oauth/token"
+      user_info_url: "https://10.220.7.195/oauth-service/api/user/information"
+      username_field: "profile"
+      redirect_uri: "http://10.72.216.63:8005/v2/#/auth"
