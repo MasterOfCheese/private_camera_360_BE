@@ -33,3 +33,4 @@ oauth:
       user_info_url: "https://10.220.7.195/oauth-service/api/user/information"
       username_field: "profile"
       redirect_uri: "http://10.72.216.63:8005/v2/#/auth"
+      logout_url: "https://fiisw-cns.myfiinet.com/oauth-service/logout"
