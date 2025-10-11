@@ -130,6 +130,12 @@ async def get_current_user(
         raise credentials_exception
     return UserPublic.from_orm(user)
 
+
+def get_token_expiry_for_user(username: str, default_expiry: int) -> int:
+    if username == "viewERC":
+        return 525600 # 1 year for user "viewERC"
+    return default_expiry  # nếu ko phải "viewERC" thì lấy trong config mặc định
+
 # ===== Standard Login =====
 
 @router.post("/token", response_model=Token)
@@ -149,11 +155,17 @@ async def login_for_access_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    expiry_minutes = getattr(
+    # lấy default expiry from config
+    default_expiry = getattr(
         request.app.state.config, 
         'token_expiry_minutes', 
         ACCESS_TOKEN_EXPIRE_MINUTES
     ) if request else ACCESS_TOKEN_EXPIRE_MINUTES
+    
+    # update require của ERC: Get custom expiry for specific user
+    expiry_minutes = get_token_expiry_for_user(user.username, default_expiry)
+    
+    print(f"[Auth-normal] User '{user.username}' token expiry: {expiry_minutes} minutes")
     
     access_token = create_access_token(
         data={"sub": user.username}, 
@@ -277,9 +289,16 @@ async def oauth_login(
             status_code=404,
             detail=f"User '{username}' is not registered. Please contact administrator at FAI - AI Department."
         )
+        
+    # Update theo require của ERC: Get custom expiry for specific user
+    expiry_minutes = get_token_expiry_for_user(username, ACCESS_TOKEN_EXPIRE_MINUTES)
+    print(f"[OAuth] User '{username}' token expiry: {expiry_minutes} minutes")
 
     # 5. Create internal JWT token
-    access_token = create_access_token(data={"sub": username})
+    access_token = create_access_token(
+    data={"sub": username}, 
+    expires_delta=expiry_minutes
+)
 
     return Token(
         access_token=access_token,

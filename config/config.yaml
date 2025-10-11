@@ -1,8 +1,9 @@
+# config.yaml:
 db_connection_string: postgresql+asyncpg://postgres:123456@127.0.0.1:5432/packing_vietnam
 host: 0.0.0.0
 log_dir: logs
 port: 8005
-token_expiry_minutes: 1440
+token_expiry_minutes: 90000
 
 # MediaMTX servers configuration
 mediamtx_servers:
@@ -21,9 +22,8 @@ mediamtx_servers:
 
 # OAuth2:
 oauth:
-  secret_key: "AI2025"
   algorithm: "HS256"
-  access_token_expire_minutes: 1440
+  # access_token_expire_minutes: 1440
   
   providers:
     internal:
