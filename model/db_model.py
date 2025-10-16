@@ -29,6 +29,16 @@ class UserInfo(BaseModel):
     username: str
     config: bool
 
+class ErrorDetailBase(SQLModel):
+    location: str = Field(index=True)                   
+    owner: Optional[str] = Field(default=None)          
+    error_name: Optional[str] = Field(default=None)    
+    timestamp: str    
+    image_url: Optional[str] = Field(default=None)      
+
+class ErrorDetail(ErrorDetailBase, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+
 # Base Model without db connection
 class CameraConfigBase(SQLModel):
     name: str = Field(index=True)
@@ -103,7 +113,6 @@ class AlarmConfirmationLog(SQLModel, table=True):
     employee_confirm_id: str
     client_ip: str
     logged_at: datetime.datetime = Field(default_factory=datetime.datetime.now)
-    
     
 class WorkerEvent(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)

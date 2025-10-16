@@ -3,7 +3,7 @@ import datetime
 import os
 import shutil
 from typing import Annotated, Optional, List, Union
-from sqlalchemy import String
+from sqlalchemy import String, distinct
 import uuid
 from zipfile import Path
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, UploadFile, File, Request
@@ -18,6 +18,7 @@ from model.db_model import AlarmConfirmationRequest
 from sqlalchemy.ext.asyncio import AsyncSession
 router = APIRouter(prefix="/v1/cameras",tags=["cameras"])
 from pydantic import BaseModel
+from model.db_model import ErrorDetail 
 
 @router.patch("/worker-events/{worker_event_id}/decline")
 async def decline_worker_event_by_id(
@@ -106,6 +107,72 @@ async def accept_worker_event_by_id(
         await session.rollback()
         raise HTTPException(status_code=500, detail=str(e))
     
+@router.post("/error-detail")
+async def create_error_detail(
+    *,
+    location: str = Form(...),
+    owner: Optional[str] = Form(None),
+    error_name: Optional[str] = Form(None),
+    timestamp: Optional[str] = Form(None),
+    image_file: Union[UploadFile, None, str] = File(None),
+    session: AsyncSession = Depends(get_session)
+):
+    """
+    📌 API tạo bản ghi mới trong bảng ErrorDetail
+    """
+    try:
+        # 1. Xử lý thời gian — nếu người dùng không truyền timestamp thì lấy thời gian hiện tại
+        if not timestamp:
+            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # 2. Tạo thư mục lưu ảnh theo ngày
+        date_folder = datetime.datetime.now().strftime('%Y-%m-%d')
+        event_folder = f"static/error-detail/{date_folder}"
+        os.makedirs(event_folder, exist_ok=True)
+
+        event_uuid = str(uuid.uuid4())
+
+        # 3. Xử lý ảnh (nếu có)
+        image_relative_path = None
+        if image_file and image_file.filename:
+            img_filename = f"{event_uuid}_error_image.png"
+            img_path = os.path.join(event_folder, img_filename)
+
+            img_contents = await image_file.read()
+            image = Image.open(io.BytesIO(img_contents))
+            image.save(img_path, format="PNG", quality=80)
+
+            image_relative_path = f"{event_folder}/{img_filename}"
+
+        # 4. Tạo bản ghi mới
+        new_error = ErrorDetail(
+            location=location,
+            owner=owner,
+            error_name=error_name,
+            timestamp=timestamp,
+            image_url=image_relative_path
+        )
+        session.add(new_error)
+        await session.commit()
+        await session.refresh(new_error)
+
+        # 5. Trả về response
+        return {
+            "success": True,
+            "error_detail": {
+                "id": new_error.id,
+                "location": new_error.location,
+                "owner": new_error.owner,
+                "error_name": new_error.error_name,
+                "timestamp": new_error.timestamp,
+                "image_url": f"/{image_relative_path}" if image_relative_path else None
+            }
+        }
+
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.post("/worker-events")
 async def create_worker_event(
     *,
@@ -211,8 +278,6 @@ async def create_worker_event(
         await session.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
-    
-
 @router.get("/worker-events")
 async def get_worker_events(
     session: AsyncSession = Depends(get_session),
@@ -226,7 +291,7 @@ async def get_worker_events(
     sort_by: str = Query(default="id", description="sort by field (id, timestamp, camera_name, location, error_detail, status)"),
     order: str = Query(default="desc", regex="^(asc|desc)$"),
     start_time: Optional[int] = Query(default=None),
-    end_time: Optional[int] = Query(default=None),
+    end_time: Optional[int] = Query(default=None)
 ):
     try:
         stmt = select(WorkerEvent)
@@ -247,14 +312,14 @@ async def get_worker_events(
             stmt = stmt.where(WorkerEvent.location.ilike(f"%{location}%"))
         if start_time:
             stmt = stmt.where(
-                WorkerEvent.timestamp >= datetime.datetime.fromtimestamp(start_time).strftime('%Y-%m-%d')
+                WorkerEvent.timestamp >= datetime.datetime.fromtimestamp(start_time, tz=datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
             )
-            # print("start time: ",datetime.datetime.fromtimestamp(start_time).strftime('%Y-%m-%d'))
+            print("start time: ",datetime.datetime.fromtimestamp(start_time, tz=datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S'))
         if end_time:
             stmt = stmt.where(
-                WorkerEvent.timestamp <= datetime.datetime.fromtimestamp(end_time).strftime('%Y-%m-%d')
+                WorkerEvent.timestamp <= datetime.datetime.fromtimestamp(end_time, tz=datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
             )
-            # print("end time: ", datetime.datetime.fromtimestamp(end_time).strftime('%Y-%m-%d'))
+            print("end time: ", datetime.datetime.fromtimestamp(end_time, tz=datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S'))
 
         # Count total (sử dụng subquery để inherit filters)
         count_subquery = stmt.subquery()
@@ -292,7 +357,67 @@ async def get_worker_events(
         print(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Error fetching worker_events: {str(e)}")
     
-    
+@router.get("/locations")
+async def get_distinct_locations(session: AsyncSession = Depends(get_session)):
+    """
+    Trả danh sách location dạng [{label: 'B08 1F', value: 'B08 1F'}, ...]
+    """
+    try:
+        result = await session.execute(select(distinct(WorkerEvent.location)))
+        rows = [row[0] for row in result.fetchall() if row[0]]
+        locations = [{"label": loc, "value": loc} for loc in rows]
+        print("locations:", locations)
+        return locations
+    except Exception as e:
+        import traceback
+        print("Error in get_distinct_locations:", str(e))
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Error fetching locations: {str(e)}")
+
+
+@router.get("/bbs/owner-stats")
+async def get_bbs_owner_stats():
+    data = [
+        {
+            "owner_name": "Vương Thành",
+            "standard_count": 22,
+            "actual_count": 20,
+            "processed_count": 20
+        },
+        {
+            "owner_name": "Lý Lâm",
+            "standard_count": 40,
+            "actual_count": 30,
+            "processed_count": 25
+        },
+        {
+            "owner_name": "Trương Cường",
+            "standard_count": 40,
+            "actual_count": 41,
+            "processed_count": 40
+        },
+        {
+            "owner_name": "Lưu Minh",
+            "standard_count": 40,
+            "actual_count": 40,
+            "processed_count": 40
+        }
+        ,
+        {
+            "owner_name": "Lưu Hoa",
+            "standard_count": 40,
+            "actual_count": 41,
+            "processed_count": 30
+        }
+        ,
+        {
+            "owner_name": "Minh Vương",
+            "standard_count": 20,
+            "actual_count": 40,
+            "processed_count": 30
+        }
+    ]
+    return data
 
 @router.post("/alarms")
 async def create_alarm(

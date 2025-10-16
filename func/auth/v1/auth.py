@@ -1,4 +1,5 @@
 # auth.py - Improved OAuth System with config.yaml
+import base64
 import datetime
 import os
 import sys
@@ -41,7 +42,7 @@ def load_oauth_config():
             'oauth': {
                 'secret_key': os.getenv("SECRET_KEY", "AI2025"),
                 'algorithm': 'HS256',
-                'access_token_expire_minutes': 15,
+                'access_token_expire_minutes': 30,
                 'providers': {}
             }
         }
@@ -72,8 +73,9 @@ def build_oauth_providers():
             "user_info_url": provider_config.get('user_info_url'),
             "user_info_headers": lambda token: {"Authorization": f"Bearer {token}"} 
                 if provider_name != "github" 
-                else {"Authorization": f"token {token}"},
-            "username_field": provider_config.get('username_field', 'username')
+                else {"Authorization": f"Bearer {token}"},
+            "username_field": provider_config.get('username_field', 'username'),
+            "redirect_uri": provider_config.get('redirect_uri', 'http://10.72.216.63:8005/v2/#/auth'),
         }
     
     return providers
@@ -221,12 +223,8 @@ async def oauth_login(
     try:
         token_response = requests.post(
             provider_config["token_url"],
-            headers={'Accept': 'application/json'},
-            data={
-                'client_id': provider_config["client_id"],
-                'client_secret': provider_config["client_secret"],
-                'code': code,
-            },
+            headers={'Authorization': 'Basic ' + base64.b64encode(f"{provider_config['client_id']}:{provider_config['client_secret']}".encode()).decode()},
+            data={'grant_type': 'authorization_code', 'code': code, 'redirect_uri': provider_config['redirect_uri']},
             timeout=10,
             verify=False
         )
@@ -236,7 +234,7 @@ async def oauth_login(
                 status_code=400,
                 detail=f"{provider_name.title()} token exchange failed: {token_response.text}"
             )
-
+        print(token_response.text)
         token_data = token_response.json()
         provider_access_token = token_data.get('access_token')
 
